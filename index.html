@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Shiv Construction - 3D AR Tape</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #111;
+            color: #fff;
+        }
+        #hud {
+            position: fixed;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+            pointer-events: none;
+        }
+        .badge {
+            background: rgba(0, 0, 0, 0.75);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            border-left: 4px solid #ff9800;
+        }
+        .measurement-badge {
+            background: #ff9800;
+            color: #000;
+            font-size: 16px;
+            font-weight: 800;
+            padding: 8px 16px;
+            border-radius: 20px;
+        }
+        #ar-btn-container {
+            position: fixed;
+            bottom: 25px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            z-index: 100;
+        }
+        .action-btn {
+            background: #ff9800;
+            color: #000;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 30px;
+            font-size: 16px;
+            font-weight: 700;
+            box-shadow: 0 4px 15px rgba(255, 152, 0, 0.4);
+            cursor: pointer;
+        }
+    </style>
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="hud">
+        <div class="badge" id="infoText">AR Shuru karne ke liye button dabayein</div>
+        <div class="measurement-badge" id="distDisplay">0.0 in</div>
+    </div>
+
+    <div id="ar-btn-container">
+        <button class="action-btn" id="startBtn" onclick="initAR()">🚀 Start 3D AR Camera</button>
+    </div>
+
+    <script>
+        let camera, scene, renderer;
+        let reticle;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+
+        let points = [];
+        let line = null;
+        let markers = [];
+
+        const infoText = document.getElementById('infoText');
+        const distDisplay = document.getElementById('distDisplay');
+        const startBtn = document.getElementById('startBtn');
+
+        async function initAR() {
+            if (!navigator.xr) {
+                alert("Aapke browser me WebXR support nahi hai. Chrome browser use karein aur phone me 'Google Play Services for AR' check karein.");
+                return;
+            }
+
+            const supported = await navigator.xr.isSessionSupported('immersive-ar');
+            if (!supported) {
+                alert("Is device par Immersive AR available nahi hai.");
+                return;
+            }
+
+            // Three.js Scene Setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+            scene.add(light);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // Ring (Reticle) jo diwaar ya floor surface ko detect karega
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial({ color: 0xff9800 })
+            );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+
+            // Start XR Session
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+
+            renderer.xr.setSession(session);
+            startBtn.style.display = 'none';
+            infoText.innerText = "Surface par camera ghumayein aur screen tap karein";
+
+            session.addEventListener('select', onSelect);
+
+            renderer.setAnimationLoop(render);
+        }
+
+        function onSelect() {
+            if (!reticle.visible) return;
+
+            // Reticle ki asal 3D position lein
+            const pt = new THREE.Vector3();
+            pt.setFromMatrixPosition(reticle.matrix);
+
+            if (points.length >= 2) {
+                // Do points hone ke baad reset
+                points = [];
+                markers.forEach(m => scene.remove(m));
+                markers = [];
+                if (line) scene.remove(line);
+            }
+
+            points.push(pt);
+
+            // Dot marker lagayein
+            const markerGeo = new THREE.SphereGeometry(0.015, 16, 16);
+            const markerMat = new THREE.MeshBasicMaterial({ color: points.length === 1 ? 0xff9800 : 0x00e676 });
+            const marker = new THREE.Mesh(markerGeo, markerMat);
+            marker.position.copy(pt);
+            scene.add(marker);
+            markers.push(marker);
+
+            if (points.length === 1) {
+                infoText.innerText = "Point 1 lag gaya! Dusre sire par jaakar tap karein";
+            } else if (points.length === 2) {
+                // Line draw karein
+                const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+                const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 4 });
+                line = new THREE.Line(lineGeo, lineMat);
+                scene.add(line);
+
+                // Asal 3D physical distance nikaalein (Meters me hota hai)
+                const meters = points[0].distanceTo(points[1]);
+                const inches = (meters * 39.3701).toFixed(1);
+                const cm = (meters * 100).toFixed(1);
+
+                distDisplay.innerText = `${inches} in (${cm} cm)`;
+                infoText.innerText = "Measurement complete! Naya naap lene ke liye dobara tap karein";
+            }
+        }
+
+        function render(timestamp, frame) {
+            if (frame) {
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const session = frame.session;
+
+                if (!hitTestSourceRequested) {
+                    session.requestReferenceSpace('viewer').then(referenceSpace => {
+                        session.requestHitTestSource({ space: referenceSpace }).then(source => {
+                            hitTestSource = source;
+                        });
+                    });
+                    session.addEventListener('end', () => {
+                        hitTestSourceRequested = false;
+                        hitTestSource = null;
+                    });
+                    hitTestSourceRequested = true;
+                }
+
+                if (hitTestSource) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+                    if (hitTestResults.length) {
+                        const hit = hitTestResults[0];
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+                    } else {
+                        reticle.visible = false;
+                    }
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
