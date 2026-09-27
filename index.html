@@ -5,14 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Shiv Construction - 3D AR Tape Pro</title>
     <style>
-        /* Camera passthrough ke liye background transparent hona compulsory hai */
+        * {
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+            box-sizing: border-box;
+        }
+
         html, body {
             margin: 0;
             padding: 0;
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: transparent !important;
+            background-color: transparent !important;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             color: #fff;
         }
@@ -25,18 +31,19 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            z-index: 1000;
+            z-index: 10000;
             pointer-events: none;
         }
 
         .badge {
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.75);
             padding: 8px 12px;
-            border-radius: 6px;
+            border-radius: 8px;
             font-size: 13px;
             font-weight: 600;
             border-left: 4px solid #ff9800;
-            max-width: 60%;
+            max-width: 65%;
+            color: #fff;
         }
 
         .measurement-badge {
@@ -46,7 +53,7 @@
             font-weight: 800;
             padding: 8px 14px;
             border-radius: 20px;
-            box-shadow: 0 4px 12px rgba(255, 152, 0, 0.4);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
 
         #ar-btn-container {
@@ -56,7 +63,7 @@
             right: 0;
             display: flex;
             justify-content: center;
-            z-index: 1000;
+            z-index: 10000;
         }
 
         .action-btn {
@@ -67,7 +74,7 @@
             border-radius: 30px;
             font-size: 16px;
             font-weight: 700;
-            box-shadow: 0 4px 15px rgba(255, 152, 0, 0.4);
+            box-shadow: 0 4px 15px rgba(255, 152, 0, 0.5);
             cursor: pointer;
         }
 
@@ -75,8 +82,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%;
-            height: 100%;
+            width: 100vw !important;
+            height: 100vh !important;
             background: transparent !important;
         }
     </style>
@@ -86,7 +93,7 @@
 <body>
 
     <div id="hud">
-        <div class="badge" id="infoText">Camera shuru karne ke liye niche button dabayein</div>
+        <div class="badge" id="infoText">Camera shuru karne ke liye button dabayein</div>
         <div class="measurement-badge" id="distDisplay">0.0 in</div>
     </div>
 
@@ -110,32 +117,39 @@
 
         async function initAR() {
             if (!navigator.xr) {
-                alert("WebXR is browser me supported nahi hai. Kripya phone ke Chrome browser me chalayein.");
+                alert("WebXR is browser me supported nahi hai. Kripya Android Chrome me chalayein.");
                 return;
             }
 
             const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
             if (!isSupported) {
-                alert("Aapka device Immersive AR support nahi kar raha hai.");
+                alert("Aapka device Immersive AR support nahi karta.");
                 return;
             }
 
-            // 1. Three.js Scene Setup (Transparent Background)
+            // 1. Scene setup
             scene = new THREE.Scene();
+            scene.background = null; // Camera passthrough visible karne ke liye zaroori hai
+
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
 
-            // WebGL Renderer with Alpha Transparent
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+            // 2. WebGL Renderer with full transparency
+            renderer = new THREE.WebGLRenderer({
+                antialias: true,
+                alpha: true,
+                powerPreference: "high-performance"
+            });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
-            renderer.setClearColor(0x000000, 0); // 0 alpha = 100% transparent
+            renderer.setClearAlpha(0); // 0 = 100% transparent background
+
             document.body.appendChild(renderer.domElement);
 
-            // 2. Reticle Ring (Surface Targeter)
+            // 3. Ring Reticle (Surface indicator)
             const ringGeo = new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2);
             const ringMat = new THREE.MeshBasicMaterial({ color: 0xff9800 });
             reticle = new THREE.Mesh(ringGeo, ringMat);
@@ -143,7 +157,6 @@
             reticle.visible = false;
             scene.add(reticle);
 
-            // 3. WebXR Session Request
             try {
                 const session = await navigator.xr.requestSession('immersive-ar', {
                     requiredFeatures: ['hit-test'],
@@ -153,7 +166,7 @@
 
                 renderer.xr.setSession(session);
                 startBtn.style.display = 'none';
-                infoText.innerText = "Camera surface par ghumayein, orange ring dikhegi";
+                infoText.innerText = "Floor ya diwaar par camera ghumayein";
 
                 session.addEventListener('select', onSelect);
                 renderer.setAnimationLoop(render);
@@ -163,19 +176,20 @@
                     infoText.innerText = "Camera session band ho gaya";
                 });
             } catch (err) {
-                console.error("AR Start Error:", err);
-                alert("AR start karne me error: " + err.message);
+                alert("AR Start error: " + err.message);
             }
         }
 
         function onSelect() {
-            if (!reticle.visible) return;
+            if (!reticle.visible) {
+                infoText.innerText = "Pehle surface detect hone dein (Orange ring aane dein)";
+                return;
+            }
 
             const pt = new THREE.Vector3();
             pt.setFromMatrixPosition(reticle.matrix);
 
             if (points.length >= 2) {
-                // Reset points
                 points = [];
                 markers.forEach(m => scene.remove(m));
                 markers = [];
@@ -184,7 +198,7 @@
 
             points.push(pt);
 
-            // Visual Marker Dot
+            // 3D Ball Marker
             const markerGeo = new THREE.SphereGeometry(0.015, 16, 16);
             const markerMat = new THREE.MeshBasicMaterial({ color: points.length === 1 ? 0xff9800 : 0x00e676 });
             const marker = new THREE.Mesh(markerGeo, markerMat);
@@ -193,7 +207,7 @@
             markers.push(marker);
 
             if (points.length === 1) {
-                infoText.innerText = "Pehla point set! Dusri jagah ring le jaakar tap karein";
+                infoText.innerText = "Point 1 set! Ab dusri jagah ring le jakar tap karein";
             } else if (points.length === 2) {
                 // 3D Line
                 const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
@@ -201,13 +215,13 @@
                 line = new THREE.Line(lineGeo, lineMat);
                 scene.add(line);
 
-                // Real Physical 3D Distance
+                // Exact Real 3D Distance Calculation
                 const meters = points[0].distanceTo(points[1]);
                 const inches = (meters * 39.3701).toFixed(1);
                 const cm = (meters * 100).toFixed(1);
 
                 distDisplay.innerText = `${inches} in (${cm} cm)`;
-                infoText.innerText = "Measurement complete! Naya naap lene ke liye dobara tap karein";
+                infoText.innerText = "Naap complete! Naye naap ke liye dobara tap karein";
             }
         }
 
